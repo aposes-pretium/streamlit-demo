@@ -8,7 +8,7 @@ st.set_page_config(layout="wide")
 st.title("🏙️ CBSA and ZIP-Level Real Estate Insights")
 
 # === Load ZIP and CBSA data ===
-zip_df = pd.read_parquet("data/zip_gdf.parquet")
+zip_df = pd.read_parquet("data/zip5_gdf.parquet")
 cbsa_df = pd.read_parquet("data/cbsa_gdf.parquet")
 
 # === Tabs to separate views ===
