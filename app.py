@@ -17,12 +17,23 @@ tab1, tab2 = st.tabs(["📍 ZIP Choropleth", "🏙️ CBSA Explorer"])
 # === ZIP-Level Map ===
 with tab1:
     st.subheader("ZIP Hotness by H3")
-    lat_col = st.selectbox("Latitude column", zip_df.columns, index=0)
-    lon_col = st.selectbox("Longitude column", zip_df.columns, index=1)
-    score_col = st.selectbox("Score column", zip_df.columns, index=2)
-    resolution = st.slider("H3 Resolution", 3, 10, 7)
+    score_col = st.selectbox("Score column", zip_df.columns)
 
-    zip_df["h3"] = zip_df.apply(lambda row: h3.geo_to_h3(row[lat_col], row[lon_col], resolution), axis=1)
+    resolution = st.slider("H3 Resolution", 3, 10, 7)
+    
+    # If geometry exists, convert to centroid
+    if "geometry" in zip_df.columns:
+        zip_df["centroid_lat"] = zip_df["geometry"].apply(lambda g: g.centroid.y if hasattr(g, "centroid") else None)
+        zip_df["centroid_lon"] = zip_df["geometry"].apply(lambda g: g.centroid.x if hasattr(g, "centroid") else None)
+        lat_col, lon_col = "centroid_lat", "centroid_lon"
+    else:
+        lat_col = st.selectbox("Latitude column", zip_df.columns)
+        lon_col = st.selectbox("Longitude column", zip_df.columns)
+    
+    # Only compute H3 where lat/lon are valid
+    zip_df = zip_df.dropna(subset=[lat_col, lon_col])
+    zip_df["h3"] = zip_df.apply(lambda row: h3.geo_to_h3(float(row[lat_col]), float(row[lon_col]), resolution), axis=1)
+
     hex_df = zip_df.groupby("h3")[score_col].mean().reset_index()
     hex_df["geometry"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
     hex_df["centroid"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo(x))
