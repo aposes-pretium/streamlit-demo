@@ -2,6 +2,5 @@ streamlit
 pandas
 pydeck
 h3
-openai
-pyarrow
 requests
+pyarrow
