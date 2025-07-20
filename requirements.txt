@@ -4,3 +4,4 @@ pydeck
 h3
 openai
 pyarrow
+requests
