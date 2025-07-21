@@ -6,9 +6,9 @@ import h3
 st.set_page_config(layout="wide")
 st.title("🔥 ZIP vs CBSA Differential Choropleth (H3-Based)")
 
-zip_df = pd.read_parquet("zip5_reference_table.parquet")
-cbsa_df = pd.read_parquet("cbsa_reference_table.parquet")
-crosswalk = pd.read_parquet("h3_zip_cbsa_crosswalk.parquet")
+zip_df = pd.read_parquet("data/zip5_reference_table.parquet")
+cbsa_df = pd.read_parquet("data/cbsa_reference_table.parquet")
+crosswalk = pd.read_parquet("data/h3_zip_cbsa_crosswalk.parquet")
 
 # Merge and calculate differential
 zip_metric_col = "TREND_DEMAND_PCT"
