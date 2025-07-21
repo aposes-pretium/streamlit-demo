@@ -1,59 +1,60 @@
 import streamlit as st
-import pandas as pd
+import geopandas as gpd
 import pydeck as pdk
-import h3
-import os
 
 st.set_page_config(layout="wide")
-st.title("🏙️ ZIP-MSA Hotness Differential Map (H3 Choropleth)")
+st.title("🗺️ ZIP & CBSA Polygon Viewer (No DuckDB, No H3)")
 
-# === Load Parquet Files ===
-zip_df = pd.read_parquet("data/zip5_gdf.parquet")
-cbsa_df = pd.read_parquet("data/cbsa_gdf.parquet")
+uploaded_zip = st.file_uploader("Upload ZIP GeoParquet", type=["parquet"], key="zip")
+uploaded_cbsa = st.file_uploader("Upload CBSA GeoParquet", type=["parquet"], key="cbsa")
 
-# === Column Selection ===
-score_col = st.selectbox("Select metric to compare", [c for c in zip_df.columns if "SCORE" in c or "VALUE" in c])
-cbsa_col = st.selectbox("Matching CBSA metric", [c for c in cbsa_df.columns if "SCORE" in c or "VALUE" in c])
+if uploaded_zip:
+    zip_gdf = gpd.read_parquet(uploaded_zip)
+    st.success("ZIP file loaded.")
+    st.write(zip_gdf.head())
 
-zip_cbsa_join_col = st.selectbox("CBSA join key", ["CBSA", "CBSA_CODE", "metro", "METROCODE"])
-zip_lat = st.selectbox("ZIP latitude column", [c for c in zip_df.columns if "lat" in c.lower()])
-zip_lon = st.selectbox("ZIP longitude column", [c for c in zip_df.columns if "lon" in c.lower()])
+if uploaded_cbsa:
+    cbsa_gdf = gpd.read_parquet(uploaded_cbsa)
+    st.success("CBSA file loaded.")
+    st.write(cbsa_gdf.head())
 
-resolution = st.slider("H3 Resolution", 3, 10, 7)
+if uploaded_zip and uploaded_cbsa:
+    st.subheader("📍 Map View")
 
-# === Merge ZIP + CBSA ===
-merged = pd.merge(zip_df, cbsa_df, on=zip_cbsa_join_col, suffixes=("_ZIP", "_MSA"))
-merged["DIFFERENTIAL"] = merged[f"{score_col}_ZIP"] - merged[f"{cbsa_col}_MSA"]
+    # Convert to lat/lon
+    zip_gdf = zip_gdf.to_crs(epsg=4326)
+    cbsa_gdf = cbsa_gdf.to_crs(epsg=4326)
 
-# === Compute H3 ===
-merged["h3"] = merged.apply(lambda row: h3.geo_to_h3(row[zip_lat], row[zip_lon], resolution), axis=1)
+    zip_centroids = zip_gdf.centroid
+    cbsa_centroids = cbsa_gdf.centroid
 
-# === Aggregate by H3 ===
-hex_df = merged.groupby("h3")["DIFFERENTIAL"].mean().reset_index()
-hex_df["geometry"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
-hex_df["centroid"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo(x))
+    zip_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=zip_centroids,
+        get_position="geometry.coordinates",
+        get_radius=500,
+        get_fill_color="[255, 100, 100, 150]",
+        pickable=True
+    )
 
-# === Map Layer ===
-hex_layer = pdk.Layer(
-    "PolygonLayer",
-    data=hex_df,
-    get_polygon="geometry",
-    get_fill_color="[255 * (1 - (DIFFERENTIAL + 10)/20), 100, 255 * ((DIFFERENTIAL + 10)/20), 150]",
-    pickable=True,
-    auto_highlight=True,
-)
+    cbsa_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=cbsa_centroids,
+        get_position="geometry.coordinates",
+        get_radius=1000,
+        get_fill_color="[100, 100, 255, 150]",
+        pickable=True
+    )
 
-view_state = pdk.ViewState(
-    latitude=hex_df["centroid"].apply(lambda x: x[0]).mean(),
-    longitude=hex_df["centroid"].apply(lambda x: x[1]).mean(),
-    zoom=5,
-)
+    view_state = pdk.ViewState(
+        latitude=zip_centroids.y.mean(),
+        longitude=zip_centroids.x.mean(),
+        zoom=5,
+        pitch=0
+    )
 
-st.pydeck_chart(pdk.Deck(
-    layers=[hex_layer],
-    initial_view_state=view_state,
-    tooltip={"text": "Diff: {DIFFERENTIAL}"}
-))
-
-st.subheader("Underlying H3 + Differential Data")
-st.dataframe(hex_df.head(30), use_container_width=True)
+    st.pydeck_chart(pdk.Deck(
+        layers=[zip_layer, cbsa_layer],
+        initial_view_state=view_state,
+        tooltip={"text": "ZIP or CBSA Area"}
+    ))
