@@ -4,3 +4,4 @@ pydeck
 h3
 requests
 pyarrow
+geopandas
