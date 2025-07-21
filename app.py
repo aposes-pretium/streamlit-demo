@@ -1,60 +1,49 @@
 import streamlit as st
-import geopandas as gpd
+import pandas as pd
 import pydeck as pdk
+import h3
+from shapely.geometry import Polygon
 
 st.set_page_config(layout="wide")
-st.title("🗺️ ZIP & CBSA Polygon Viewer (No DuckDB, No H3)")
+st.title("🔥 ZIP vs CBSA Differential Choropleth (H3)")
 
-uploaded_zip = st.file_uploader("Upload ZIP GeoParquet", type=["parquet"], key="zip")
-uploaded_cbsa = st.file_uploader("Upload CBSA GeoParquet", type=["parquet"], key="cbsa")
+# Uploads
+crosswalk_file = st.file_uploader("Upload H3 Crosswalk", type=["parquet"])
+zip_file = st.file_uploader("Upload ZIP-level Metrics", type=["parquet"])
+cbsa_file = st.file_uploader("Upload CBSA-level Metrics", type=["parquet"])
 
-if uploaded_zip:
-    zip_gdf = gpd.read_parquet(uploaded_zip)
-    st.success("ZIP file loaded.")
-    st.write(zip_gdf.head())
+if crosswalk_file and zip_file and cbsa_file:
+    # Load all data
+    crosswalk = pd.read_parquet(crosswalk_file)
+    zip_data = pd.read_parquet(zip_file)
+    cbsa_data = pd.read_parquet(cbsa_file)
 
-if uploaded_cbsa:
-    cbsa_gdf = gpd.read_parquet(uploaded_cbsa)
-    st.success("CBSA file loaded.")
-    st.write(cbsa_gdf.head())
+    # Merge metrics
+    df = crosswalk.merge(zip_data, on="ZIP5").merge(cbsa_data, on="CBSA", suffixes=("_zip", "_cbsa"))
 
-if uploaded_zip and uploaded_cbsa:
-    st.subheader("📍 Map View")
+    metric = st.selectbox("Choose metric to compare", [col for col in df.columns if "_zip" in col])
+    zip_metric = metric
+    cbsa_metric = metric.replace("_zip", "_cbsa")
 
-    # Convert to lat/lon
-    zip_gdf = zip_gdf.to_crs(epsg=4326)
-    cbsa_gdf = cbsa_gdf.to_crs(epsg=4326)
+    df["DIFFERENCE"] = df[zip_metric] - df[cbsa_metric]
 
-    zip_centroids = zip_gdf.centroid
-    cbsa_centroids = cbsa_gdf.centroid
+    # Get polygon boundary for each H3
+    df["polygon"] = df["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
+    df["lat"] = df["polygon"].apply(lambda coords: sum([p[1] for p in coords]) / len(coords))
+    df["lon"] = df["polygon"].apply(lambda coords: sum([p[0] for p in coords]) / len(coords))
 
-    zip_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=zip_centroids,
-        get_position="geometry.coordinates",
-        get_radius=500,
-        get_fill_color="[255, 100, 100, 150]",
-        pickable=True
+    # Map Layer
+    hex_layer = pdk.Layer(
+        "PolygonLayer",
+        data=df,
+        get_polygon="polygon",
+        get_fill_color="[255 * (DIFFERENCE > 0), 100, 255 * (DIFFERENCE < 0), 140]",
+        pickable=True,
+        auto_highlight=True,
     )
 
-    cbsa_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=cbsa_centroids,
-        get_position="geometry.coordinates",
-        get_radius=1000,
-        get_fill_color="[100, 100, 255, 150]",
-        pickable=True
-    )
+    view = pdk.ViewState(latitude=df["lat"].mean(), longitude=df["lon"].mean(), zoom=5)
+    st.pydeck_chart(pdk.Deck(layers=[hex_layer], initial_view_state=view, tooltip={"text": "ZIP: {ZIP5}\nΔ: {DIFFERENCE}"}))
 
-    view_state = pdk.ViewState(
-        latitude=zip_centroids.y.mean(),
-        longitude=zip_centroids.x.mean(),
-        zoom=5,
-        pitch=0
-    )
-
-    st.pydeck_chart(pdk.Deck(
-        layers=[zip_layer, cbsa_layer],
-        initial_view_state=view_state,
-        tooltip={"text": "ZIP or CBSA Area"}
-    ))
+    st.subheader("Data Preview")
+    st.dataframe(df[["ZIP5", "CBSA", "DIFFERENCE", zip_metric, cbsa_metric]].head())
