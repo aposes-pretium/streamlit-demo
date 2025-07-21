@@ -1,80 +1,60 @@
 import streamlit as st
-import pandas as pd
+import geopandas as gpd
 import pydeck as pdk
-import h3
-import requests
-import json
 
 st.set_page_config(layout="wide")
+st.title("🗺️ ZIP & CBSA Polygon Viewer (No DuckDB, No H3)")
 
-st.title("📍 H3 Choropleth of ZIP-Level Real Estate Data")
+uploaded_zip = st.file_uploader("Upload ZIP GeoParquet", type=["parquet"], key="zip")
+uploaded_cbsa = st.file_uploader("Upload CBSA GeoParquet", type=["parquet"], key="cbsa")
 
-# Upload Parquet file
-uploaded_file = st.file_uploader("Upload your Parquet file", type=["parquet"])
+if uploaded_zip:
+    zip_gdf = gpd.read_parquet(uploaded_zip)
+    st.success("ZIP file loaded.")
+    st.write(zip_gdf.head())
 
-if uploaded_file:
-    df = pd.read_parquet(uploaded_file)
-    st.success("File loaded!")
+if uploaded_cbsa:
+    cbsa_gdf = gpd.read_parquet(uploaded_cbsa)
+    st.success("CBSA file loaded.")
+    st.write(cbsa_gdf.head())
 
-    st.subheader("Data Preview")
-    st.dataframe(df.head())
+if uploaded_zip and uploaded_cbsa:
+    st.subheader("📍 Map View")
 
-    lat_col = st.selectbox("Latitude column", df.columns, index=0)
-    lon_col = st.selectbox("Longitude column", df.columns, index=1)
-    score_col = st.selectbox("Metric for choropleth (e.g. HOTNESS_SCORE)", df.columns)
+    # Convert to lat/lon
+    zip_gdf = zip_gdf.to_crs(epsg=4326)
+    cbsa_gdf = cbsa_gdf.to_crs(epsg=4326)
 
-    resolution = st.slider("H3 Resolution", 3, 10, 7)
+    zip_centroids = zip_gdf.centroid
+    cbsa_centroids = cbsa_gdf.centroid
 
-    df["h3"] = df.apply(lambda row: h3.geo_to_h3(row[lat_col], row[lon_col], resolution), axis=1)
+    zip_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=zip_centroids,
+        get_position="geometry.coordinates",
+        get_radius=500,
+        get_fill_color="[255, 100, 100, 150]",
+        pickable=True
+    )
 
-    # Aggregate by H3
-    hex_df = df.groupby("h3")[score_col].mean().reset_index()
-    hex_df["geometry"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
-    hex_df["centroid"] = hex_df["h3"].apply(lambda x: h3.h3_to_geo(x))
-
-    # Format for pydeck
-    hex_layer = pdk.Layer(
-        "PolygonLayer",
-        data=hex_df,
-        get_polygon="geometry",
-        get_fill_color=f"[{score_col} * 10, 100, 150, 140]",
-        pickable=True,
-        auto_highlight=True
+    cbsa_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=cbsa_centroids,
+        get_position="geometry.coordinates",
+        get_radius=1000,
+        get_fill_color="[100, 100, 255, 150]",
+        pickable=True
     )
 
     view_state = pdk.ViewState(
-        latitude=hex_df["centroid"].apply(lambda x: x[0]).mean(),
-        longitude=hex_df["centroid"].apply(lambda x: x[1]).mean(),
-        zoom=6,
+        latitude=zip_centroids.y.mean(),
+        longitude=zip_centroids.x.mean(),
+        zoom=5,
         pitch=0
     )
 
-    st.subheader("Choropleth Map")
-    st.pydeck_chart(pdk.Deck(layers=[hex_layer], initial_view_state=view_state, tooltip={"text": f"{score_col}: {{{score_col}}}"}))
-
-    # GPT Section
-    st.subheader("🧠 Ask Together AI About This Data")
-
-    user_msg = st.chat_input("Ask a question about your data")
-
-    if user_msg and "TOGETHER_API_KEY" in st.secrets:
-        preview = df[[lat_col, lon_col, score_col]].head(10).to_csv(index=False)
-        prompt = f"You are analyzing real estate data with lat/lon and a score metric named '{score_col}'. Here are the first 10 rows:\n{preview}\n\nQuestion: {user_msg}"
-
-        headers = {
-            "Authorization": f"Bearer {st.secrets['TOGETHER_API_KEY']}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-            "prompt": prompt,
-            "max_tokens": 300,
-            "temperature": 0.7,
-        }
-
-        with st.spinner("Thinking..."):
-            response = requests.post("https://api.together.xyz/v1/completions", headers=headers, json=payload)
-            answer = response.json()["choices"][0]["text"]
-            st.markdown("**LLM says:**")
-            st.write(answer)
+    st.pydeck_chart(pdk.Deck(
+        layers=[zip_layer, cbsa_layer],
+        initial_view_state=view_state,
+        tooltip={"text": "ZIP or CBSA Area"}
+    ))
