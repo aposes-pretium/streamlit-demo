@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
-import h3
+import h3.api.basic_int as h3
 
 st.set_page_config(layout="wide")
 st.title("🔥 ZIP vs CBSA Differential Choropleth (H3-Based)")
