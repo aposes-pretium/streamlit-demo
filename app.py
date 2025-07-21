@@ -6,59 +6,54 @@ import h3
 st.set_page_config(layout="wide")
 st.title("🔥 ZIP vs CBSA Differential Choropleth (H3-Based)")
 
-uploaded_zip = st.file_uploader("Upload ZIP reference table", type=["parquet"])
-uploaded_cbsa = st.file_uploader("Upload CBSA reference table", type=["parquet"])
-uploaded_crosswalk = st.file_uploader("Upload H3 ZIP–CBSA crosswalk", type=["parquet"])
+zip_df = pd.read_parquet("zip5_reference_table.parquet")
+cbsa_df = pd.read_parquet("cbsa_reference_table.parquet")
+crosswalk = pd.read_parquet("h3_zip_cbsa_crosswalk.parquet")
 
-if uploaded_zip and uploaded_cbsa and uploaded_crosswalk:
-    zip_df = pd.read_parquet(uploaded_zip)
-    cbsa_df = pd.read_parquet(uploaded_cbsa)
-    crosswalk = pd.read_parquet(uploaded_crosswalk)
-
-    # Merge and calculate differential
-    zip_metric_col = "TREND_DEMAND_PCT"
-    cbsa_metric_col = "TREND_DEMAND_PCT"
+# Merge and calculate differential
+zip_metric_col = "TREND_DEMAND_PCT"
+cbsa_metric_col = "TREND_DEMAND_PCT"
     
-    full = crosswalk.merge(zip_df, on="ZIP5").merge(cbsa_df, on="CBSA", suffixes=("_zip", "_cbsa"))
-    full["DIFFERENCE"] = full[f"{zip_metric_col}_zip"] - full[f"{cbsa_metric_col}_cbsa"]
+full = crosswalk.merge(zip_df, on="ZIP5").merge(cbsa_df, on="CBSA", suffixes=("_zip", "_cbsa"))
+full["DIFFERENCE"] = full[f"{zip_metric_col}_zip"] - full[f"{cbsa_metric_col}_cbsa"]
     
-    # Convert H3 to polygon + centroid for map
-    full["polygon"] = full["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
-    full["lat"] = full["polygon"].apply(lambda coords: sum([pt[1] for pt in coords]) / len(coords))
-    full["lon"] = full["polygon"].apply(lambda coords: sum([pt[0] for pt in coords]) / len(coords))
+# Convert H3 to polygon + centroid for map
+full["polygon"] = full["h3"].apply(lambda x: h3.h3_to_geo_boundary(x, geo_json=True))
+full["lat"] = full["polygon"].apply(lambda coords: sum([pt[1] for pt in coords]) / len(coords))
+full["lon"] = full["polygon"].apply(lambda coords: sum([pt[0] for pt in coords]) / len(coords))
     
-    # Define color function based on positive/negative difference
-    def get_color(d):
-        if d > 5:
-            return [231, 76, 60, 160]  # Danger
-        elif d > 2:
-            return [243, 156, 18, 160]  # Warning
-        elif d > 0:
-            return [39, 174, 96, 160]  # Success
-        elif d > -2:
-            return [41, 128, 185, 160]  # Secondary
-        else:
-            return [127, 127, 127, 160]  # Neutral
+# Define color function based on positive/negative difference
+def get_color(d):
+    if d > 5:
+        return [231, 76, 60, 160]  # Danger
+    elif d > 2:
+        return [243, 156, 18, 160]  # Warning
+    elif d > 0:
+        return [39, 174, 96, 160]  # Success
+    elif d > -2:
+        return [41, 128, 185, 160]  # Secondary
+    else:
+        return [127, 127, 127, 160]  # Neutral
     
-    full["color"] = full["DIFFERENCE"].apply(get_color)
+full["color"] = full["DIFFERENCE"].apply(get_color)
     
-    # Build pydeck map
-    hex_layer = pdk.Layer(
-        "PolygonLayer",
-        data=full,
-        get_polygon="polygon",
-        get_fill_color="color",
-        pickable=True,
-        auto_highlight=True,
-    )
+# Build pydeck map
+hex_layer = pdk.Layer(
+"PolygonLayer",
+data=full,
+get_polygon="polygon",
+get_fill_color="color",
+pickable=True,
+auto_highlight=True,
+)
     
-    view = pdk.ViewState(latitude=full["lat"].mean(), longitude=full["lon"].mean(), zoom=5)
+view = pdk.ViewState(latitude=full["lat"].mean(), longitude=full["lon"].mean(), zoom=5)
     
-    st.pydeck_chart(pdk.Deck(
-        layers=[hex_layer],
-        initial_view_state=view,
-        tooltip={"text": "ZIP: {ZIP5}\nΔ: {DIFFERENCE}"}
-    ))
+st.pydeck_chart(pdk.Deck(
+    layers=[hex_layer],
+    initial_view_state=view,
+    tooltip={"text": "ZIP: {ZIP5}\nΔ: {DIFFERENCE}"}
+))
     
-    st.subheader("Data Preview")
-    st.dataframe(full[["ZIP5", "CBSA", "DIFFERENCE", f"{zip_metric_col}_zip", f"{cbsa_metric_col}_cbsa"]].head())
+st.subheader("Data Preview")
+st.dataframe(full[["ZIP5", "CBSA", "DIFFERENCE", f"{zip_metric_col}_zip", f"{cbsa_metric_col}_cbsa"]].head())
